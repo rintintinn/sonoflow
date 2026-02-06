@@ -18,6 +18,8 @@ class ProcessingResult:
     flow_rate: np.ndarray     # Flow rate Q(t) in ml/s
     qmax: float               # Maximum flow rate from minimal smoothing (ml/s)
     qmax_smoothed: float      # Maximum flow rate from full smoothing (ml/s)
+    qmax_icc_sliding: float   # ICC: max of sliding window average (~200ms)
+    qmax_icc_consecutive: float  # ICC: sustained max (consecutive frames above threshold)
     qavg: float               # Average flow rate (ml/s)
     voiding_time: float       # Total voiding time (seconds)
     volume_ml: float          # User-provided volume (ml)
@@ -38,6 +40,8 @@ class AudioProcessor:
     NOISE_PERCENTILE = 10      # Percentile for noise floor estimation
     MEDIAN_FILTER_SIZE = 3     # Short median filter for transient spike suppression
     EMA_ALPHA = 0.15           # EMA smoothing factor (lower = smoother)
+    ICC_WINDOW_FRAMES = 8      # ~200ms at 25ms hop (for ICC Qmax calculation)
+    ICC_THRESHOLD_RATIO = 0.95 # Threshold for consecutive frames method
     
     def __init__(self):
         pass
@@ -78,9 +82,14 @@ class AudioProcessor:
         # Step 8: Smoothing (with separate Qmax calculation)
         flow_rate_minimal, flow_rate_smooth = self._smooth_signal(flow_rate)
         
-        # Calculate parameters - both Qmax values for validation
+        # Calculate parameters - multiple Qmax values for validation
         qmax = float(np.max(flow_rate_minimal))        # From minimal smoothing
         qmax_smoothed = float(np.max(flow_rate_smooth)) # From full smoothing
+        
+        # ICC-compliant Qmax calculations (sustained ≥200ms)
+        qmax_icc_sliding = self._calc_qmax_icc_sliding(flow_rate_minimal)
+        qmax_icc_consecutive = self._calc_qmax_icc_consecutive(flow_rate_minimal)
+        
         qavg = volume_ml / voiding_time if voiding_time > 0 else 0.0
         
         return ProcessingResult(
@@ -88,6 +97,8 @@ class AudioProcessor:
             flow_rate=flow_rate_smooth,
             qmax=qmax,
             qmax_smoothed=qmax_smoothed,
+            qmax_icc_sliding=qmax_icc_sliding,
+            qmax_icc_consecutive=qmax_icc_consecutive,
             qavg=qavg,
             voiding_time=voiding_time,
             volume_ml=volume_ml
@@ -251,6 +262,62 @@ class AudioProcessor:
             result[i] = alpha * data[i] + (1 - alpha) * result[i-1]
         
         return result
+    
+    def _calc_qmax_icc_sliding(self, flow_rate: np.ndarray) -> float:
+        """
+        ICC Qmax Method 1: Sliding window average.
+        
+        Calculates Qmax as the maximum of sliding window averages,
+        where window size corresponds to ~200ms (8 frames at 25ms hop).
+        This ensures Qmax represents a sustained flow, not a transient spike.
+        """
+        if len(flow_rate) < self.ICC_WINDOW_FRAMES:
+            return float(np.max(flow_rate))
+        
+        # Compute sliding window average
+        kernel = np.ones(self.ICC_WINDOW_FRAMES) / self.ICC_WINDOW_FRAMES
+        sliding_avg = np.convolve(flow_rate, kernel, mode='valid')
+        
+        return float(np.max(sliding_avg))
+    
+    def _calc_qmax_icc_consecutive(self, flow_rate: np.ndarray) -> float:
+        """
+        ICC Qmax Method 2: Consecutive frames above threshold.
+        
+        Finds the highest flow value that is sustained for at least
+        ICC_WINDOW_FRAMES consecutive frames (≥200ms).
+        Uses binary search to find the maximum sustained threshold.
+        """
+        if len(flow_rate) < self.ICC_WINDOW_FRAMES:
+            return float(np.max(flow_rate))
+        
+        peak = np.max(flow_rate)
+        min_val = 0.0
+        max_val = peak
+        
+        # Binary search for highest sustained threshold
+        for _ in range(20):  # 20 iterations gives good precision
+            mid = (min_val + max_val) / 2
+            
+            # Check if there are N consecutive frames above mid
+            above_threshold = flow_rate >= mid
+            
+            # Find longest run of True values
+            max_run = 0
+            current_run = 0
+            for val in above_threshold:
+                if val:
+                    current_run += 1
+                    max_run = max(max_run, current_run)
+                else:
+                    current_run = 0
+            
+            if max_run >= self.ICC_WINDOW_FRAMES:
+                min_val = mid  # This threshold is achievable
+            else:
+                max_val = mid  # This threshold is too high
+        
+        return float(min_val)
 
 
 def validate_audio(duration: float, sample_rate: int, volume_ml: float) -> str | None:

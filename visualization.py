@@ -71,10 +71,12 @@ def generate_clinical_graph(result: ProcessingResult, output_path: str = None) -
     # Minor ticks
     ax.minorticks_on()
     
-    # Annotations box with both Qmax values
+    # Annotations box with all Qmax values for validation
     annotation_text = (
-        f"Qmax (min): {result.qmax:.1f} ml/s\n"
+        f"Qmax (peak): {result.qmax:.1f} ml/s\n"
         f"Qmax (smooth): {result.qmax_smoothed:.1f} ml/s\n"
+        f"Qmax (ICC-slide): {result.qmax_icc_sliding:.1f} ml/s\n"
+        f"Qmax (ICC-consec): {result.qmax_icc_consecutive:.1f} ml/s\n"
         f"Qavg: {result.qavg:.1f} ml/s\n"
         f"Volume: {result.volume_ml:.0f} ml\n"
         f"Voiding Time: {result.voiding_time:.1f} s"
@@ -83,7 +85,7 @@ def generate_clinical_graph(result: ProcessingResult, output_path: str = None) -
     props = dict(boxstyle='round,pad=0.5', facecolor='white', 
                  edgecolor='#2c3e50', alpha=0.9)
     ax.text(0.98, 0.97, annotation_text, transform=ax.transAxes, 
-            fontsize=11, verticalalignment='top', horizontalalignment='right',
+            fontsize=10, verticalalignment='top', horizontalalignment='right',
             bbox=props, family='monospace')
     
     # (Timestamp now shown in title)

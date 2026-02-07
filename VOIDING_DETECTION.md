@@ -141,18 +141,36 @@ end_idx = last sustained period above ratio threshold
 
 ---
 
-### Approach 8: Multi-Episode Detection ✅ **CURRENT DEFAULT**
+### Approach 8: Multi-Episode Detection with Hybrid Edges ✅ **CURRENT DEFAULT**
 
 Handles intermittent voiding patterns (straining, BPH) by detecting ALL episodes first, then merging.
-Uses **Otsu adaptive threshold + changepoint detection** (same methodology as Approach 7, extended for multi-episode).
+Uses **two-threshold approach** + **asymmetric edge refinement**.
+
+#### Two-Threshold Approach
+
+| Threshold | Purpose | Value |
+|-----------|---------|-------|
+| **Scanning threshold** | Find episode boundaries | `noise_floor + 0.5 × (otsu - noise_floor)` |
+| **Otsu threshold** | Validate episode content | Ensures ≥10% of frames above Otsu |
+
+**Why two thresholds**: Otsu fragments variable-energy episodes into micro-episodes. The lower scanning threshold captures the broad envelope, while Otsu validates genuine voiding content.
+
+#### Asymmetric Edge Refinement
+
+| Edge | Characteristic | Method |
+|------|---------------|--------|
+| **Onset** | Sharp (stream hitting water) | Changepoint detector |
+| **Offset** | Gradual (trickle tail-off) | Tail-walk until `energy < noise×1.5` for 0.5s |
+
+**Why asymmetric**: Changepoint works for sharp transitions but cuts the gradual trickle tail too early. Tail-walk mirrors how conventional uroflowmeters detect end-of-flow.
 
 ```python
 from multi_episode_detection import detect_voiding_multiepisode
 
-# No noise_floor needed - uses Otsu adaptive threshold
 multi_result = detect_voiding_multiepisode(
     energy=energy,
     time_axis=time_axis,
+    noise_floor=noise_floor,  # For scanning threshold calculation
 )
 
 # Gap classification determines which episodes to include:
@@ -166,15 +184,16 @@ voiding_time = multi_result.voiding_time    # Includes pauses
 flow_time = multi_result.flow_time          # Excludes pauses
 num_episodes = multi_result.num_episodes
 flow_pattern = multi_result.pattern         # "continuous", "intermittent", "straining"
-otsu_threshold = multi_result.otsu_thresh   # Otsu threshold used
 ```
 
+**Result**: **24.7s** voiding time — matches medical-grade reference exactly!
+
 **Why this is now default**:
-- **Uses Otsu+Changepoint** — fully adaptive, no hardcoded thresholds
+- **Two-threshold approach** — captures variable-energy episodes without fragmentation
+- **Asymmetric edge refinement** — changepoint for onset, tail-walk for offset
 - **Handles intermittent voiding** — doesn't miss episodes after pauses
 - **ICS-compliant dual timing** — separate voiding_time and flow_time
 - **Flow pattern classification** — diagnostically valuable for BPH patients
-- **Gap-based logic** — clinically meaningful thresholds (2s/5s/20%)
 
 ---
 

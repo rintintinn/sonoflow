@@ -17,11 +17,12 @@ The app uses acoustic signal processing to estimate urine flow rate from the sou
 
 1. **Audio preprocessing**: Band-pass filtering (250-4000 Hz) at native sample rate
 2. **Energy extraction**: Short-time RMS energy computation
-3. **Multi-episode detection**: Detects all flow episodes, merges based on gap classification
-4. **Volume calibration**: Area under curve normalized to user-provided volume
-5. **Smoothing**: Median filter + causal EMA for clinical-grade curves
-6. **Qmax calculation**: 0.5s onset exclusion + 300ms sustained flow requirement
-7. **ICS-compliant Qavg**: Uses flow time (excluding pauses), not voiding time
+3. **Multi-episode detection**: Two-threshold approach (scanning + Otsu validation)
+4. **Asymmetric edge refinement**: Changepoint for onset, tail-walk for offset
+5. **Volume calibration**: Area under curve normalized to user-provided volume
+6. **Smoothing**: Median filter + causal EMA for clinical-grade curves
+7. **Qmax calculation**: 0.5s onset exclusion + 300ms sustained flow requirement
+8. **ICS-compliant Qavg**: Uses flow time (excluding pauses), not voiding time
 
 ## ICS Compliance
 

@@ -117,7 +117,10 @@ qmax_ics_consecutive = min_val
 dQ_dt = np.diff(flow_rate) / dt  # dt = hop_length_sec
 
 # Step 2: Adaptive slope threshold (90th percentile)
-slope_threshold = np.percentile(abs(dQ_dt), 90)
+# EXCLUDE first 300ms from threshold calibration
+slope_exclusion_frames = int(0.3 / hop_length_sec)
+abs_dQ_dt_for_threshold = abs(dQ_dt)[slope_exclusion_frames:]
+slope_threshold = np.percentile(abs_dQ_dt_for_threshold, 90)
 
 # Step 3: Mark stable regions (|dQ/dt| ≤ threshold for ≥200ms)
 stable_mask = find_stable_regions(abs(dQ_dt), slope_threshold, min_frames=8)
@@ -128,8 +131,10 @@ qmax_slope_stabilized = find_sustained_max_in_stable(flow_rate, stable_mask)
 
 **Parameters**:
 - Slope percentile: 90% (data-adaptive, not fixed)
+- Threshold calibration exclusion: 300ms (prevents onset turbulence inflation)
 - Stable region minimum: 200ms (8 frames)
 - Qmax sustained requirement: 300ms (12 frames)
+- Qmax eligibility window: ≥0.5s after onset (unchanged)
 
 ### Test Results
 

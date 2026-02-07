@@ -506,7 +506,14 @@ class AudioProcessor:
         abs_dQ_dt = np.abs(dQ_dt)
         
         # Step 3: Adaptive threshold at 90th percentile
-        slope_threshold = float(np.percentile(abs_dQ_dt, self.SLOPE_PERCENTILE))
+        # EXCLUDE first 300ms from threshold calibration to prevent onset turbulence inflation
+        slope_exclusion_frames = int(0.3 / hop_length_sec)  # 300ms = ~12 frames at 25ms hop
+        if len(abs_dQ_dt) > slope_exclusion_frames:
+            abs_dQ_dt_for_threshold = abs_dQ_dt[slope_exclusion_frames:]
+        else:
+            abs_dQ_dt_for_threshold = abs_dQ_dt
+        
+        slope_threshold = float(np.percentile(abs_dQ_dt_for_threshold, self.SLOPE_PERCENTILE))
         
         # Avoid zero threshold
         if slope_threshold < 1e-6:

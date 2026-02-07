@@ -21,8 +21,13 @@ class ProcessingResult:
     qmax_ics_sliding: float   # ICS: max of sliding window average (~300ms)
     qmax_ics_consecutive: float  # ICS: sustained max (consecutive frames above threshold)
     qavg: float               # Average flow rate (ml/s)
-    voiding_time: float       # Total voiding time (seconds)
+    voiding_time: float       # Total voiding time including pauses (ICS "voiding time")
     volume_ml: float          # User-provided volume (ml)
+    
+    # Multi-episode detection (ICS-compliant)
+    num_episodes: int = 1                   # Number of flow episodes detected
+    flow_pattern: str = "continuous"        # "continuous", "intermittent", "straining"
+    flow_time: Optional[float] = None       # Actual flow time excluding pauses (ICS "flow time")
     
     # Audio quality indicators
     sample_rate: int = 0                    # Original sample rate
@@ -105,13 +110,21 @@ class AudioProcessor:
         if sample_rate not in [44100, 48000]:
             quality_warnings.append(f"Non-standard sample rate: {sample_rate}Hz (expected 44100 or 48000)")
         
-        # Step 5: Voiding segment detection using Otsu+Changepoint (default method)
-        from alternative_detection import detect_voiding_alternative
-        detection_result = detect_voiding_alternative(energy, time_axis)
-        start_idx = detection_result.start_idx
-        end_idx = detection_result.end_idx
-        voiding_time = detection_result.voiding_time
-        otsu_threshold_value = detection_result.otsu_threshold
+        # Step 5: Voiding segment detection using Multi-Episode detection
+        # Handles intermittent voiding patterns (straining, BPH)
+        from multi_episode_detection import detect_voiding_multiepisode
+        
+        multi_result = detect_voiding_multiepisode(
+            energy=energy,
+            time_axis=time_axis,
+            noise_floor=noise_floor,
+        )
+        start_idx = multi_result.voiding_start_idx
+        end_idx = multi_result.voiding_end_idx
+        voiding_time = multi_result.voiding_time
+        flow_time = multi_result.flow_time
+        num_episodes = multi_result.num_episodes
+        flow_pattern = multi_result.pattern
         
         # Step 5b: Compute SNR (Signal-to-Noise Ratio)
         # SNR = 10 * log10(voiding_energy / noise_floor)
@@ -165,13 +178,14 @@ class AudioProcessor:
         qmax_ics_sliding = self._calc_qmax_ics_sliding(flow_for_qmax_minimal)
         qmax_ics_consecutive = self._calc_qmax_ics_consecutive(flow_for_qmax_minimal)
         
-        qavg = volume_ml / voiding_time if voiding_time > 0 else 0.0
+        # ICS-compliant Qavg: uses FLOW TIME (excluding pauses), not voiding time
+        qavg = volume_ml / flow_time if flow_time and flow_time > 0 else 0.0
         
-        # Initialize optional fields (now shows legacy fixed-threshold for comparison)
+        # Initialize optional fields
         alt_start_time = None
         alt_end_time = None
         alt_voiding_time = None
-        alt_otsu_threshold = otsu_threshold_value  # Store Otsu threshold used
+        alt_otsu_threshold = None
         qmax_slope_stabilized = None
         slope_threshold = None
         debug_data = None
@@ -222,6 +236,9 @@ class AudioProcessor:
             qavg=qavg,
             voiding_time=voiding_time,
             volume_ml=volume_ml,
+            num_episodes=num_episodes,
+            flow_pattern=flow_pattern,
+            flow_time=flow_time,
             sample_rate=sample_rate,
             snr_db=snr_db,
             quality_warning=quality_warning,

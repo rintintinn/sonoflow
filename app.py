@@ -261,6 +261,21 @@ if "result" in st.session_state and st.session_state.result:
         </div>
         """, unsafe_allow_html=True)
     
+    # Flow pattern indicator (for intermittent voiding)
+    if result.num_episodes > 1:
+        pattern_colors = {
+            "intermittent": "#f59e0b",  # amber
+            "straining": "#ef4444",      # red
+        }
+        pattern_color = pattern_colors.get(result.flow_pattern, "#3b82f6")
+        st.markdown(f"""
+        <div style="background: {pattern_color}22; border: 1px solid {pattern_color}; border-radius: 8px; padding: 0.75rem; margin: 1rem 0;">
+            <span style="color: {pattern_color}; font-weight: 600;">🔄 {result.flow_pattern.capitalize()} Flow Pattern</span>
+            <span style="color: #94a3b8; margin-left: 1rem;">{result.num_episodes} episodes detected</span>
+            <span style="color: #64748b; margin-left: 1rem;">Flow time: {result.flow_time:.1f}s (Voiding time: {result.voiding_time:.1f}s)</span>
+        </div>
+        """, unsafe_allow_html=True)
+    
     # Graph
     st.markdown("### Flow Curve")
     st.image(st.session_state.graph_bytes, use_container_width=True)

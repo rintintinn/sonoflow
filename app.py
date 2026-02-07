@@ -323,13 +323,16 @@ if "result" in st.session_state and st.session_state.result:
             
             # Show Qmax comparison if available
             if result.qmax_slope_stabilized is not None:
-                col_std, col_slope = st.columns(2)
+                col_std, col_slope, col_time = st.columns(3)
                 with col_std:
                     st.metric("Qmax Standard", f"{result.qmax:.1f} ml/s")
                 with col_slope:
                     delta = result.qmax_slope_stabilized - result.qmax
                     st.metric("Qmax Slope-Stabilized", f"{result.qmax_slope_stabilized:.1f} ml/s",
                              delta=f"{delta:+.1f} ml/s")
+                with col_time:
+                    if result.time_to_max_flow is not None:
+                        st.metric("Time to Max Flow", f"{result.time_to_max_flow:.1f} s")
 
 # Footer - always display
 st.markdown("""

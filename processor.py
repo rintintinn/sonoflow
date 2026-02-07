@@ -42,6 +42,7 @@ class ProcessingResult:
     
     # Slope-stabilized Qmax (debug only)
     qmax_slope_stabilized: Optional[float] = None
+    time_to_max_flow: Optional[float] = None  # Time when Qmax occurred from voiding onset (seconds)
     slope_threshold: Optional[float] = None
     
     # Debug data (optional, only populated when debug=True)
@@ -189,6 +190,7 @@ class AudioProcessor:
         alt_voiding_time = None
         alt_otsu_threshold = otsu_threshold_value  # Store Otsu threshold from multi-episode detection
         qmax_slope_stabilized = None
+        time_to_max_flow = None
         slope_threshold = None
         debug_data = None
         
@@ -203,9 +205,12 @@ class AudioProcessor:
             alt_voiding_time = legacy_voiding_time
             
             # Compute slope-stabilized Qmax (on full trimmed flow, not exclusion-masked)
-            qmax_slope_stabilized, slope_threshold, stable_mask = self._calc_qmax_slope_stabilized(
+            qmax_slope_stabilized, slope_threshold, stable_mask, qmax_idx = self._calc_qmax_slope_stabilized(
                 flow_rate_minimal, hop_length_sec
             )
+            
+            # Compute Time to Max Flow (from voiding onset)
+            time_to_max_flow = qmax_idx * hop_length_sec
             
             # Store debug data for visualization
             # Note: "fixed" = Otsu+changepoint (now default), "alt" = legacy fixed-threshold
@@ -249,6 +254,7 @@ class AudioProcessor:
             alt_voiding_time=alt_voiding_time,
             alt_otsu_threshold=alt_otsu_threshold,
             qmax_slope_stabilized=qmax_slope_stabilized,
+            time_to_max_flow=time_to_max_flow,
             slope_threshold=slope_threshold,
             debug_data=debug_data
         )
@@ -529,7 +535,7 @@ class AudioProcessor:
         return float(min_val)
     
     def _calc_qmax_slope_stabilized(self, flow_rate: np.ndarray, 
-                                      hop_length_sec: float) -> Tuple[float, float, np.ndarray]:
+                                      hop_length_sec: float) -> Tuple[float, float, np.ndarray, int]:
         """
         Slope-stabilized Qmax: Only considers stable flow regions.
         
@@ -540,14 +546,16 @@ class AudioProcessor:
         4. Within stable regions, find max flow sustained for ≥300ms
         
         Returns:
-            Tuple of (qmax_value, slope_threshold, stable_mask)
+            Tuple of (qmax_value, slope_threshold, stable_mask, qmax_idx)
             - qmax_value: Maximum sustained flow in stable regions
             - slope_threshold: Adaptive threshold used
             - stable_mask: Boolean array marking stable time points
+            - qmax_idx: Frame index where Qmax occurs (for Time to Max Flow)
         """
         if len(flow_rate) < self.SLOPE_STABLE_FRAMES + self.QMAX_SUSTAINED_FRAMES:
             # Signal too short, return simple max
-            return float(np.max(flow_rate)), 0.0, np.ones(len(flow_rate), dtype=bool)
+            max_idx = int(np.argmax(flow_rate))
+            return float(np.max(flow_rate)), 0.0, np.ones(len(flow_rate), dtype=bool), max_idx
         
         # Step 1: Compute first-order difference (dQ/dt)
         # dQ_dt[t] = (Q[t] - Q[t-1]) / dt
@@ -603,7 +611,8 @@ class AudioProcessor:
         # Apply stable mask to flow and find sustained max
         if not np.any(stable_mask):
             # No stable regions found, fall back to simple max
-            return float(np.max(flow_rate)), slope_threshold, stable_mask
+            max_idx = int(np.argmax(flow_rate))
+            return float(np.max(flow_rate)), slope_threshold, stable_mask, max_idx
         
         # Create a masked flow (NaN for unstable regions)
         flow_stable = np.where(stable_mask, flow_rate, np.nan)
@@ -611,21 +620,26 @@ class AudioProcessor:
         # Find sustained max using sliding window within stable regions
         if np.sum(stable_mask) < self.QMAX_SUSTAINED_FRAMES:
             # Not enough stable points, return max of stable points
-            return float(np.nanmax(flow_stable)), slope_threshold, stable_mask
+            max_idx = int(np.nanargmax(flow_stable))
+            return float(np.nanmax(flow_stable)), slope_threshold, stable_mask, max_idx
         
         # Compute sliding window average within stable regions
         qmax_stable = 0.0
+        qmax_idx = 0
         for i in range(len(flow_rate) - self.QMAX_SUSTAINED_FRAMES + 1):
             window = flow_stable[i:i + self.QMAX_SUSTAINED_FRAMES]
             if np.all(~np.isnan(window)):  # All points in window are stable
                 window_avg = np.mean(window)
-                qmax_stable = max(qmax_stable, window_avg)
+                if window_avg > qmax_stable:
+                    qmax_stable = window_avg
+                    qmax_idx = i + self.QMAX_SUSTAINED_FRAMES // 2  # Center of window
         
         # If no full stable window found, use max of stable points
         if qmax_stable == 0.0:
+            qmax_idx = int(np.nanargmax(flow_stable))
             qmax_stable = float(np.nanmax(flow_stable))
         
-        return qmax_stable, slope_threshold, stable_mask
+        return qmax_stable, slope_threshold, stable_mask, qmax_idx
 
 
 def validate_audio(duration: float, sample_rate: int, volume_ml: float) -> str | None:

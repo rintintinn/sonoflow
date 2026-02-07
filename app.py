@@ -155,8 +155,9 @@ if analyze_clicked:
                     
                     # Generate detection comparison graph
                     comparison_bytes = None
+                    flow_stability_bytes = None
                     if result.debug_data:
-                        from debug_plots import plot_detection_comparison
+                        from debug_plots import plot_detection_comparison, plot_flow_stability
                         d = result.debug_data
                         comparison_bytes = plot_detection_comparison(
                             time_axis=d['time_axis_full'],
@@ -167,11 +168,23 @@ if analyze_clicked:
                             alt_start_idx=d['alt_start_idx'],
                             alt_end_idx=d['alt_end_idx']
                         )
+                        
+                        # Generate flow stability graph (slope-stabilized Qmax)
+                        if 'stable_mask' in d:
+                            flow_stability_bytes = plot_flow_stability(
+                                time_axis=d['time_axis_trimmed'],
+                                flow_rate=d['flow_rate_minimal'],
+                                stable_mask=d['stable_mask'],
+                                qmax_standard=result.qmax,
+                                qmax_slope_stabilized=d['qmax_slope_stabilized'],
+                                slope_threshold=d['slope_threshold']
+                            )
                     
                     # Store in session state
                     st.session_state.result = result
                     st.session_state.graph_bytes = graph_bytes
                     st.session_state.comparison_bytes = comparison_bytes
+                    st.session_state.flow_stability_bytes = flow_stability_bytes
                     st.session_state.timestamp = timestamp_str
                     
             except Exception as e:
@@ -256,6 +269,27 @@ if "result" in st.session_state and st.session_state.result:
                     delta = result.alt_voiding_time - result.voiding_time
                     st.metric("Otsu+Changepoint", f"{result.alt_voiding_time:.1f}s", 
                              delta=f"{delta:+.1f}s")
+    
+    # Flow stability graph (slope-stabilized Qmax)
+    if "flow_stability_bytes" in st.session_state and st.session_state.flow_stability_bytes:
+        with st.expander("📈 Slope-Stabilized Qmax Analysis", expanded=False):
+            st.markdown("""
+            <p style="color: #94a3b8; font-size: 0.85rem; margin-bottom: 10px;">
+            Qmax measured only in stable flow regions (|dQ/dt| below adaptive threshold for ≥200ms).
+            Green regions = stable flow, Red regions = unstable (high slope).
+            </p>
+            """, unsafe_allow_html=True)
+            st.image(st.session_state.flow_stability_bytes, use_container_width=True)
+            
+            # Show Qmax comparison if available
+            if result.qmax_slope_stabilized is not None:
+                col_std, col_slope = st.columns(2)
+                with col_std:
+                    st.metric("Qmax Standard", f"{result.qmax:.1f} ml/s")
+                with col_slope:
+                    delta = result.qmax_slope_stabilized - result.qmax
+                    st.metric("Qmax Slope-Stabilized", f"{result.qmax_slope_stabilized:.1f} ml/s",
+                             delta=f"{delta:+.1f} ml/s")
 
 # Footer - always display
 st.markdown("""

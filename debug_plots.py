@@ -275,3 +275,117 @@ def generate_all_debug_plots(
         )
     
     return waveform_png, energy_png, comparison_png
+
+
+def plot_flow_stability(
+    time_axis: np.ndarray,
+    flow_rate: np.ndarray,
+    stable_mask: np.ndarray,
+    qmax_standard: float,
+    qmax_slope_stabilized: float,
+    slope_threshold: float,
+    title: str = "Flow Curve: Slope-Stabilized Qmax Detection"
+) -> bytes:
+    """
+    Plot flow curve with stable regions highlighted.
+    
+    Shows where Qmax can be reliably measured (stable slope regions)
+    vs unstable regions (high dQ/dt).
+    
+    Args:
+        time_axis: Time values for each flow frame (trimmed to voiding)
+        flow_rate: Flow rate values (ml/s)
+        stable_mask: Boolean array - True for stable (low slope) regions
+        qmax_standard: Standard Qmax value (without slope restriction)
+        qmax_slope_stabilized: Qmax from stable regions only
+        slope_threshold: Adaptive slope threshold used
+        title: Plot title
+        
+    Returns:
+        PNG image as bytes
+    """
+    fig, ax = plt.subplots(figsize=(12, 6), facecolor='#1e293b')
+    ax.set_facecolor('#0f172a')
+    
+    # Plot unstable regions as background shading
+    unstable_mask = ~stable_mask
+    if np.any(unstable_mask):
+        # Find contiguous unstable regions
+        starts = np.where(np.diff(unstable_mask.astype(int)) == 1)[0] + 1
+        ends = np.where(np.diff(unstable_mask.astype(int)) == -1)[0] + 1
+        
+        # Handle edge cases
+        if unstable_mask[0]:
+            starts = np.concatenate([[0], starts])
+        if unstable_mask[-1]:
+            ends = np.concatenate([ends, [len(unstable_mask)]])
+        
+        for start, end in zip(starts, ends):
+            if start < len(time_axis) and end <= len(time_axis):
+                ax.axvspan(time_axis[start], time_axis[min(end, len(time_axis)-1)], 
+                          alpha=0.25, color='#ef4444', label='_Unstable (high slope)')
+    
+    # Plot stable regions as background shading
+    if np.any(stable_mask):
+        starts = np.where(np.diff(stable_mask.astype(int)) == 1)[0] + 1
+        ends = np.where(np.diff(stable_mask.astype(int)) == -1)[0] + 1
+        
+        if stable_mask[0]:
+            starts = np.concatenate([[0], starts])
+        if stable_mask[-1]:
+            ends = np.concatenate([ends, [len(stable_mask)]])
+        
+        for start, end in zip(starts, ends):
+            if start < len(time_axis) and end <= len(time_axis):
+                ax.axvspan(time_axis[start], time_axis[min(end, len(time_axis)-1)], 
+                          alpha=0.15, color='#22c55e', label='_Stable (low slope)')
+    
+    # Plot flow curve
+    ax.plot(time_axis, flow_rate, color='#38bdf8', linewidth=1.5, label='Flow Rate')
+    
+    # Horizontal lines for Qmax values
+    ax.axhline(y=qmax_standard, color='#f59e0b', linestyle='--', linewidth=2, 
+               label=f'Qmax Standard: {qmax_standard:.1f} ml/s')
+    ax.axhline(y=qmax_slope_stabilized, color='#22c55e', linestyle='-', linewidth=2,
+               label=f'Qmax Slope-Stabilized: {qmax_slope_stabilized:.1f} ml/s')
+    
+    # Create legend with region indicators
+    import matplotlib.patches as mpatches
+    stable_patch = mpatches.Patch(color='#22c55e', alpha=0.3, label='Stable Region (|dQ/dt| ≤ threshold)')
+    unstable_patch = mpatches.Patch(color='#ef4444', alpha=0.3, label='Unstable Region (|dQ/dt| > threshold)')
+    
+    handles, labels = ax.get_legend_handles_labels()
+    handles.extend([stable_patch, unstable_patch])
+    ax.legend(handles=handles, loc='upper right', facecolor='#1e293b', 
+              edgecolor='#475569', labelcolor='white', fontsize=8)
+    
+    # Info box
+    stable_pct = np.sum(stable_mask) / len(stable_mask) * 100
+    info_text = (f'Slope threshold: {slope_threshold:.2f} ml/s²\n'
+                 f'Stable regions: {stable_pct:.0f}% of voiding\n'
+                 f'Qmax reduction: {qmax_standard - qmax_slope_stabilized:+.1f} ml/s')
+    ax.text(0.02, 0.95, info_text, transform=ax.transAxes, color='white', fontsize=9,
+            verticalalignment='top',
+            bbox=dict(boxstyle='round', facecolor='#334155', edgecolor='#475569', alpha=0.9))
+    
+    # Styling
+    ax.set_xlabel('Time (seconds)', color='white', fontsize=10)
+    ax.set_ylabel('Flow Rate (ml/s)', color='white', fontsize=10)
+    ax.set_title(title, color='white', fontsize=12, fontweight='bold')
+    ax.tick_params(colors='white')
+    ax.spines['bottom'].set_color('#475569')
+    ax.spines['left'].set_color('#475569')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.grid(True, alpha=0.2, color='#475569')
+    ax.set_ylim(bottom=0)
+    
+    plt.tight_layout()
+    
+    # Save to bytes
+    buf = BytesIO()
+    fig.savefig(buf, format='png', dpi=150, facecolor='#1e293b', edgecolor='none')
+    buf.seek(0)
+    plt.close(fig)
+    
+    return buf.getvalue()

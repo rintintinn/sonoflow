@@ -42,6 +42,8 @@ class AudioProcessor:
     EMA_ALPHA = 0.15           # EMA smoothing factor (lower = smoother)
     ICC_WINDOW_FRAMES = 8      # ~200ms at 25ms hop (for ICC Qmax calculation)
     ICC_THRESHOLD_RATIO = 0.95 # Threshold for consecutive frames method
+    ONSET_THRESHOLD_MULT = 2.0 # Multiplier for onset detection (above noise floor)
+    MIN_VOIDING_FRAMES = 20    # Minimum frames to consider as voiding (~500ms)
     
     def __init__(self):
         pass
@@ -70,14 +72,18 @@ class AudioProcessor:
         # Step 4: Noise floor calibration
         noise_floor = self._calibrate_noise_floor(energy)
         
-        # Step 5: Voiding segment detection
-        voiding_mask, voiding_time = self._detect_voiding(energy, noise_floor, time_axis)
+        # Step 5: Voiding segment detection (improved: find actual flow start/end)
+        start_idx, end_idx, voiding_time = self._detect_voiding_segment(energy, noise_floor, time_axis)
         
         # Step 6: Flow proxy construction
         flow_proxy = self._construct_flow_proxy(energy, noise_floor)
         
-        # Step 7: Volume normalization
-        flow_rate = self._normalize_volume(flow_proxy, volume_ml, time_axis)
+        # Trim to voiding segment and shift time to start at 0
+        flow_proxy_trimmed = flow_proxy[start_idx:end_idx+1]
+        time_axis_trimmed = time_axis[start_idx:end_idx+1] - time_axis[start_idx]
+        
+        # Step 7: Volume normalization (on trimmed data)
+        flow_rate = self._normalize_volume(flow_proxy_trimmed, volume_ml, time_axis_trimmed)
         
         # Step 8: Smoothing (with separate Qmax calculation)
         flow_rate_minimal, flow_rate_smooth = self._smooth_signal(flow_rate)
@@ -86,14 +92,14 @@ class AudioProcessor:
         qmax = float(np.max(flow_rate_minimal))        # From minimal smoothing
         qmax_smoothed = float(np.max(flow_rate_smooth)) # From full smoothing
         
-        # ICC-compliant Qmax calculations (sustained ≥200ms)
+        # ICC-compliant Qmax calculations (sustained >=200ms)
         qmax_icc_sliding = self._calc_qmax_icc_sliding(flow_rate_minimal)
         qmax_icc_consecutive = self._calc_qmax_icc_consecutive(flow_rate_minimal)
         
         qavg = volume_ml / voiding_time if voiding_time > 0 else 0.0
         
         return ProcessingResult(
-            time=time_axis,
+            time=time_axis_trimmed,
             flow_rate=flow_rate_smooth,
             qmax=qmax,
             qmax_smoothed=qmax_smoothed,
@@ -168,27 +174,87 @@ class AudioProcessor:
         noise_floor = np.percentile(energy, self.NOISE_PERCENTILE)
         return noise_floor
     
-    def _detect_voiding(self, energy: np.ndarray, noise_floor: float, 
-                        time_axis: np.ndarray) -> Tuple[np.ndarray, float]:
-        """Step 5: Detect voiding segments and calculate total time"""
-        # Threshold slightly above noise floor
-        threshold = noise_floor * 1.5
+    def _detect_voiding_segment(self, energy: np.ndarray, noise_floor: float, 
+                                time_axis: np.ndarray) -> Tuple[int, int, float]:
+        """
+        Step 5: Detect the actual voiding segment.
         
-        # Find frames above threshold
-        voiding_mask = energy > threshold
+        Uses a higher threshold (3x noise) to distinguish actual voiding from 
+        background noise, and identifies the main contiguous voiding region
+        while filtering out isolated post-void spikes.
         
-        if not np.any(voiding_mask):
-            return voiding_mask, 0.0
+        Returns:
+            start_idx: Index of voiding start
+            end_idx: Index of voiding end
+            voiding_time: Duration in seconds
+        """
+        # Use 3x noise floor threshold - empirically determined to distinguish
+        # voiding sound from background noise in bathroom environment
+        flow_threshold = noise_floor * 3.0
         
-        # Find first and last voiding frame
-        voiding_indices = np.where(voiding_mask)[0]
-        first_idx = voiding_indices[0]
-        last_idx = voiding_indices[-1]
+        # Find all frames above threshold
+        above_threshold = energy > flow_threshold
         
-        # Calculate voiding time
-        voiding_time = time_axis[last_idx] - time_axis[first_idx]
+        if not np.any(above_threshold):
+            # Fallback to entire recording if no clear flow detected
+            return 0, len(energy) - 1, float(time_axis[-1] - time_axis[0])
         
-        return voiding_mask, float(voiding_time)
+        # Find all indices above threshold
+        threshold_indices = np.where(above_threshold)[0]
+        first_idx = threshold_indices[0]
+        
+        # Find peak energy for relative end detection
+        peak_energy = np.max(energy)
+        peak_idx = np.argmax(energy)
+        
+        # Find end of voiding: first point after peak where energy drops to <10% of peak
+        # and stays low for at least 0.5 seconds (20 frames)
+        end_threshold = peak_energy * 0.10  # 10% of peak
+        SUSTAINED_LOW_FRAMES = 20  # ~0.5 seconds
+        
+        true_end_idx = threshold_indices[-1]  # Default to last high frame
+        
+        for i in range(peak_idx, len(energy)):
+            if energy[i] < end_threshold:
+                # Check if it stays low for SUSTAINED_LOW_FRAMES
+                low_count = 0
+                for j in range(i, min(i + SUSTAINED_LOW_FRAMES, len(energy))):
+                    if energy[j] < end_threshold:
+                        low_count += 1
+                    else:
+                        break
+                
+                if low_count >= SUSTAINED_LOW_FRAMES:
+                    true_end_idx = i
+                    break
+        
+        last_idx = true_end_idx
+        
+        # Refine start: walk back to find where upslope begins
+        start_idx = first_idx
+        for i in range(first_idx, max(first_idx - 40, 0), -1):
+            if energy[i] < noise_floor * 1.5:
+                start_idx = i + 1
+                break
+        else:
+            start_idx = max(first_idx - 40, 0)
+        
+        # Refine end: include any trailing flow above noise
+        end_idx = last_idx
+        for i in range(last_idx, min(last_idx + 20, len(energy) - 1)):
+            if energy[i] < noise_floor * 1.5:
+                end_idx = i
+                break
+        else:
+            end_idx = min(last_idx + 20, len(energy) - 1)
+        
+        # Ensure valid range
+        start_idx = max(0, start_idx)
+        end_idx = min(len(energy) - 1, end_idx)
+        
+        voiding_time = time_axis[end_idx] - time_axis[start_idx]
+        
+        return int(start_idx), int(end_idx), float(voiding_time)
     
     def _construct_flow_proxy(self, energy: np.ndarray, noise_floor: float) -> np.ndarray:
         """Step 6: F_proxy(t) = max(E(t) - noise_floor, 0)"""

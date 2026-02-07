@@ -111,13 +111,12 @@ class AudioProcessor:
             quality_warnings.append(f"Non-standard sample rate: {sample_rate}Hz (expected 44100 or 48000)")
         
         # Step 5: Voiding segment detection using Multi-Episode detection
-        # Handles intermittent voiding patterns (straining, BPH)
+        # Uses Otsu adaptive threshold + changepoint detection (consistent with alternative_detection.py)
         from multi_episode_detection import detect_voiding_multiepisode
         
         multi_result = detect_voiding_multiepisode(
             energy=energy,
             time_axis=time_axis,
-            noise_floor=noise_floor,
         )
         start_idx = multi_result.voiding_start_idx
         end_idx = multi_result.voiding_end_idx
@@ -125,6 +124,7 @@ class AudioProcessor:
         flow_time = multi_result.flow_time
         num_episodes = multi_result.num_episodes
         flow_pattern = multi_result.pattern
+        otsu_threshold_value = multi_result.otsu_thresh
         
         # Step 5b: Compute SNR (Signal-to-Noise Ratio)
         # SNR = 10 * log10(voiding_energy / noise_floor)
@@ -185,7 +185,7 @@ class AudioProcessor:
         alt_start_time = None
         alt_end_time = None
         alt_voiding_time = None
-        alt_otsu_threshold = None
+        alt_otsu_threshold = otsu_threshold_value  # Store Otsu threshold from multi-episode detection
         qmax_slope_stabilized = None
         slope_threshold = None
         debug_data = None

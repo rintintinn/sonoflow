@@ -221,15 +221,13 @@ if "result" in st.session_state and st.session_state.result:
         use_container_width=True
     )
 
-    # Footer
-    st.markdown("""
-    <div style="margin-top: 50px; padding-top: 20px; border-top: 1px solid #1e293b; text-align: center; color: #94a3b8; font-size: 0.9rem;">
-        <p style="margin-bottom: 5px;">Developed by <strong>Dr Badrulhisham Bahadzor</strong></p>
-        <p style="margin: 0;">
-            <a href="mailto:drbadrul@urology.my" style="color: #38bdf8; text-decoration: none;">drbadrul@urology.my</a> • 
-            <a href="https://www.urology.my" target="_blank" style="color: #38bdf8; text-decoration: none;">www.urology.my</a>
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-
-
+# Footer - always display
+st.markdown("""
+<div style="margin-top: 50px; padding-top: 20px; border-top: 1px solid #1e293b; text-align: center; color: #94a3b8; font-size: 0.9rem;">
+    <p style="margin-bottom: 5px;">Developed by <strong>Dr Badrulhisham Bahadzor</strong></p>
+    <p style="margin: 0;">
+        <a href="mailto:drbadrul@urology.my" style="color: #38bdf8; text-decoration: none;">drbadrul@urology.my</a> • 
+        <a href="https://www.urology.my" target="_blank" style="color: #38bdf8; text-decoration: none;">www.urology.my</a>
+    </p>
+</div>
+""", unsafe_allow_html=True)

@@ -5,9 +5,10 @@ A web application that reconstructs uroflowmetry curves from audio recordings of
 ## Features
 
 - Upload 44.1kHz or 48kHz mono WAV recordings
-- Automatic voiding detection (Otsu + Changepoint adaptive)
-- Clinical parameters: Qmax, Qavg, Voiding Time
+- **Multi-episode voiding detection** (intermittent/straining patterns)
+- Clinical parameters: Qmax, Qavg, Voiding Time, Flow Time
 - Multiple Qmax methods (ICS-compliant sustained flow)
+- Flow pattern classification (continuous/intermittent/straining)
 - Downloadable graph with timestamp
 
 ## How It Works
@@ -16,10 +17,19 @@ The app uses acoustic signal processing to estimate urine flow rate from the sou
 
 1. **Audio preprocessing**: Band-pass filtering (250-4000 Hz) at native sample rate
 2. **Energy extraction**: Short-time RMS energy computation
-3. **Voiding detection**: Otsu adaptive thresholding + changepoint detection
+3. **Multi-episode detection**: Detects all flow episodes, merges based on gap classification
 4. **Volume calibration**: Area under curve normalized to user-provided volume
 5. **Smoothing**: Median filter + causal EMA for clinical-grade curves
 6. **Qmax calculation**: 0.5s onset exclusion + 300ms sustained flow requirement
+7. **ICS-compliant Qavg**: Uses flow time (excluding pauses), not voiding time
+
+## ICS Compliance
+
+| Metric | Definition |
+|--------|------------|
+| **Voiding Time** | Total duration from first to last flow (includes pauses) |
+| **Flow Time** | Duration of actual flow only (excludes pauses) |
+| **Qavg** | Volume ÷ Flow Time (per ICS guidelines) |
 
 ## Usage
 

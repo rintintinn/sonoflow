@@ -115,7 +115,7 @@ for i in range(peak_idx, len(energy)):
 
 ---
 
-### Approach 7: Otsu + Changepoint ✅ **CURRENT DEFAULT**
+### Approach 7: Otsu + Changepoint ✅ **LEGACY**
 
 Adaptive thresholding combined with rolling-statistics changepoint detection.
 
@@ -137,35 +137,87 @@ end_idx = last sustained period above ratio threshold
 
 **Result**: **23.2s** (expected 24.7s) - **94% accuracy** ✅
 
+**Limitation**: Stops at first sustained silence, missing subsequent flow episodes in intermittent voiding.
+
+---
+
+### Approach 8: Multi-Episode Detection ✅ **CURRENT DEFAULT**
+
+Handles intermittent voiding patterns (straining, BPH) by detecting ALL episodes first, then merging.
+
+```python
+from multi_episode_detection import detect_voiding_multiepisode
+
+multi_result = detect_voiding_multiepisode(
+    energy=energy,
+    time_axis=time_axis,
+    noise_floor=noise_floor,
+)
+
+# Gap classification determines which episodes to include:
+# Gap < 2s  → straining pause → include
+# Gap > 5s  → post-void activity → exclude  
+# Gap 2-5s  → include if next episode ≥20% of peak energy
+
+start_idx = multi_result.voiding_start_idx
+end_idx = multi_result.voiding_end_idx
+voiding_time = multi_result.voiding_time    # Includes pauses
+flow_time = multi_result.flow_time          # Excludes pauses
+num_episodes = multi_result.num_episodes
+flow_pattern = multi_result.pattern         # "continuous", "intermittent", "straining"
+```
+
+**Result**: **23.7s** voiding time, **23.4s** flow time, 2 episodes detected
+
 **Why this is now default**:
-- **Fully adaptive** - no hardcoded noise floor multipliers
-- Works across varying recording environments and noise levels
-- Otsu's method automatically separates voiding from background
-- Changepoint detection finds sustained transitions, not transient spikes
+- **Handles intermittent voiding** — doesn't miss episodes after pauses
+- **ICS-compliant dual timing** — separate voiding_time and flow_time
+- **Flow pattern classification** — diagnostically valuable for BPH patients
+- **Gap-based logic** — clinically meaningful thresholds (2s/5s/20%)
 
 ---
 
 ## Current Default vs Legacy
 
-| Method | Detection Time | Status |
-|--------|---------------|--------|
-| **Otsu+Changepoint** | 23.2s | **Default** |
-| Peak-Relative Fixed | 23.7s | Legacy (debug mode) |
-| Medical-Grade Reference | 24.7s | Ground truth |
+| Method | Detection | Flow Pattern | Status |
+|--------|-----------|--------------|--------|
+| **Multi-Episode** | 23.7s voiding / 23.4s flow | Intermittent (2 ep) | **Default** |
+| Otsu+Changepoint | 23.2s | N/A | Legacy |
+| Peak-Relative Fixed | 23.7s | N/A | Legacy |
+| Medical-Grade Reference | 24.7s | - | Ground truth |
+
+---
+
+## ICS-Compliant Timing
+
+The International Continence Society defines two distinct timing metrics:
+
+| Metric | Definition | Use |
+|--------|------------|-----|
+| **Voiding Time** | First flow to last flow, INCLUDING pauses | Total event duration |
+| **Flow Time** | Actual flow only, EXCLUDING pauses | Qavg calculation |
+
+```python
+# ICS-compliant Qavg
+qavg = volume_ml / flow_time   # NOT voiding_time
+```
 
 ---
 
 ## Final Algorithm Summary (Current Default)
 
 ```python
-from alternative_detection import detect_voiding_alternative
+from multi_episode_detection import detect_voiding_multiepisode
 
-# Single call handles everything:
-result = detect_voiding_alternative(energy, time_axis)
-start_idx = result.start_idx
-end_idx = result.end_idx
-voiding_time = result.voiding_time
-otsu_threshold = result.otsu_threshold
+# Multi-episode detection handles everything:
+result = detect_voiding_multiepisode(energy, time_axis, noise_floor)
+
+start_idx = result.voiding_start_idx
+end_idx = result.voiding_end_idx
+voiding_time = result.voiding_time    # ICS voiding time (with pauses)
+flow_time = result.flow_time          # ICS flow time (without pauses)
+num_episodes = result.num_episodes
+flow_pattern = result.pattern
 
 # Time shift
 time_axis = time_axis[start_idx:end_idx] - time_axis[start_idx]
@@ -182,4 +234,5 @@ time_axis = time_axis[start_idx:end_idx] - time_axis[start_idx]
 5. **The 10% of peak threshold** works because post-void sounds are typically much weaker than peak urine flow
 6. **Otsu's method** provides truly adaptive thresholding without any hardcoded constants
 7. **Changepoint detection** finds sustained transitions rather than isolated spikes
-
+8. **Multi-episode detection** is essential for intermittent voiding (BPH, straining)
+9. **ICS dual timing** (voiding vs flow time) is clinically important for accurate Qavg

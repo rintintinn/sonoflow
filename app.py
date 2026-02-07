@@ -205,6 +205,23 @@ if "result" in st.session_state and st.session_state.result:
     st.markdown("---")
     st.subheader("📊 Analysis Results")
     
+    # Display quality warnings if any
+    if result.quality_warning:
+        st.warning(f"⚠️ **Quality Warning**: {result.quality_warning}")
+    
+    # Display SNR indicator
+    snr_color = "#22c55e" if result.snr_db >= 15 else "#f59e0b" if result.snr_db >= 10 else "#ef4444"
+    snr_status = "Good" if result.snr_db >= 15 else "Acceptable" if result.snr_db >= 10 else "Low"
+    st.markdown(f"""
+    <div style="display: flex; gap: 1rem; margin-bottom: 1rem; align-items: center;">
+        <span style="color: #94a3b8;">Signal Quality:</span>
+        <span style="background: {snr_color}; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem;">
+            SNR: {result.snr_db:.1f} dB ({snr_status})
+        </span>
+        <span style="color: #64748b; font-size: 0.8rem;">Sample Rate: {result.sample_rate/1000:.1f} kHz</span>
+    </div>
+    """, unsafe_allow_html=True)
+    
     # Parameters in columns
     col1, col2, col3, col4 = st.columns(4)
     

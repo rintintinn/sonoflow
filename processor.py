@@ -24,6 +24,11 @@ class ProcessingResult:
     voiding_time: float       # Total voiding time (seconds)
     volume_ml: float          # User-provided volume (ml)
     
+    # Audio quality indicators
+    sample_rate: int = 0                    # Original sample rate
+    snr_db: float = 0.0                     # Signal-to-noise ratio in dB
+    quality_warning: Optional[str] = None   # Warning message if quality issue detected
+    
     # Alternative detection results (optional)
     alt_start_time: Optional[float] = None
     alt_end_time: Optional[float] = None
@@ -93,6 +98,13 @@ class AudioProcessor:
         # Step 4: Noise floor calibration
         noise_floor = self._calibrate_noise_floor(energy)
         
+        # Step 4b: Quality checks - sample rate and SNR
+        quality_warnings = []
+        
+        # Check sample rate (expect 44.1kHz or 48kHz)
+        if sample_rate not in [44100, 48000]:
+            quality_warnings.append(f"Non-standard sample rate: {sample_rate}Hz (expected 44100 or 48000)")
+        
         # Step 5: Voiding segment detection using Otsu+Changepoint (default method)
         from alternative_detection import detect_voiding_alternative
         detection_result = detect_voiding_alternative(energy, time_axis)
@@ -100,6 +112,22 @@ class AudioProcessor:
         end_idx = detection_result.end_idx
         voiding_time = detection_result.voiding_time
         otsu_threshold_value = detection_result.otsu_threshold
+        
+        # Step 5b: Compute SNR (Signal-to-Noise Ratio)
+        # SNR = 10 * log10(voiding_energy / noise_floor)
+        voiding_energy = energy[start_idx:end_idx+1]
+        if len(voiding_energy) > 0 and noise_floor > 0:
+            mean_voiding_energy = float(np.mean(voiding_energy))
+            snr_db = 10 * np.log10(mean_voiding_energy / noise_floor + 1e-10)
+        else:
+            snr_db = 0.0
+        
+        # Flag low SNR recordings as unreliable
+        if snr_db < 10.0:
+            quality_warnings.append(f"Low SNR: {snr_db:.1f} dB (<10 dB may be unreliable)")
+        
+        # Combine warnings
+        quality_warning = "; ".join(quality_warnings) if quality_warnings else None
         
         # Step 6: Flow proxy construction
         flow_proxy = self._construct_flow_proxy(energy, noise_floor)
@@ -194,6 +222,9 @@ class AudioProcessor:
             qavg=qavg,
             voiding_time=voiding_time,
             volume_ml=volume_ml,
+            sample_rate=sample_rate,
+            snr_db=snr_db,
+            quality_warning=quality_warning,
             alt_start_time=alt_start_time,
             alt_end_time=alt_end_time,
             alt_voiding_time=alt_voiding_time,

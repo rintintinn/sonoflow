@@ -9,6 +9,7 @@ import base64
 import librosa
 from processor import AudioProcessor, validate_audio
 from visualization import generate_clinical_graph
+from version import __version__
 
 
 # Page config
@@ -87,10 +88,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Header
-st.markdown("""
+st.markdown(f"""
 <div class="main-header">
     <h1>Acoustic Uroflowmetry</h1>
     <p class="subtitle">Audio-based flow curve analysis</p>
+    <p style="color: #64748b; font-size: 0.8rem;">v{__version__}</p>
 </div>
 """, unsafe_allow_html=True)
 

@@ -18,12 +18,13 @@ import numpy as np
 
 from processor import AudioProcessor, validate_audio
 from visualization import generate_clinical_graph
+from version import __version__
 
 
 app = FastAPI(
     title="SonoFlow API",
     description="Acoustic Uroflowmetry Processing API",
-    version="1.0.0"
+    version=__version__
 )
 
 # Enable CORS for third-party access
@@ -41,7 +42,7 @@ async def root():
     """Health check and API information."""
     return {
         "service": "SonoFlow API",
-        "version": "1.0.0",
+        "version": __version__,
         "status": "healthy",
         "endpoints": {
             "/analyze": "POST - Returns JSON with parameters and base64 graph",

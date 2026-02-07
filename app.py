@@ -87,9 +87,17 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Header
+# Header with logo
+import os
+logo_path = os.path.join(os.path.dirname(__file__), 'UrologyMYLogo.png')
+logo_base64 = ""
+if os.path.exists(logo_path):
+    with open(logo_path, 'rb') as f:
+        logo_base64 = base64.b64encode(f.read()).decode()
+
 st.markdown(f"""
 <div class="main-header">
+    {'<img src="data:image/png;base64,' + logo_base64 + '" style="width: 120px; margin-bottom: 1rem; border-radius: 12px;">' if logo_base64 else ''}
     <h1>Acoustic Uroflowmetry</h1>
     <p class="subtitle">Audio-based flow curve analysis</p>
     <p style="color: #64748b; font-size: 0.8rem;">v{__version__}</p>

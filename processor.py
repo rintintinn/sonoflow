@@ -45,8 +45,7 @@ class AudioProcessor:
     Converts audio recording to flow curve using acoustic analysis.
     """
     
-    # Processing parameters
-    TARGET_SR = 16000          # Target sample rate (Hz)
+    # Processing parameters (native sample rate - no resampling)
     FRAME_LENGTH_MS = 50       # Frame length (ms)
     FRAME_OVERLAP = 0.5        # 50% overlap
     LOWCUT = 250               # High-pass cutoff (Hz) - suppresses environmental noise
@@ -94,8 +93,13 @@ class AudioProcessor:
         # Step 4: Noise floor calibration
         noise_floor = self._calibrate_noise_floor(energy)
         
-        # Step 5: Voiding segment detection (improved: find actual flow start/end)
-        start_idx, end_idx, voiding_time = self._detect_voiding_segment(energy, noise_floor, time_axis)
+        # Step 5: Voiding segment detection using Otsu+Changepoint (default method)
+        from alternative_detection import detect_voiding_alternative
+        detection_result = detect_voiding_alternative(energy, time_axis)
+        start_idx = detection_result.start_idx
+        end_idx = detection_result.end_idx
+        voiding_time = detection_result.voiding_time
+        otsu_threshold_value = detection_result.otsu_threshold
         
         # Step 6: Flow proxy construction
         flow_proxy = self._construct_flow_proxy(energy, noise_floor)
@@ -135,24 +139,24 @@ class AudioProcessor:
         
         qavg = volume_ml / voiding_time if voiding_time > 0 else 0.0
         
-        # Initialize optional fields
+        # Initialize optional fields (now shows legacy fixed-threshold for comparison)
         alt_start_time = None
         alt_end_time = None
         alt_voiding_time = None
-        alt_otsu_threshold = None
+        alt_otsu_threshold = otsu_threshold_value  # Store Otsu threshold used
         qmax_slope_stabilized = None
         slope_threshold = None
         debug_data = None
         
-        # Run alternative detection and slope-stabilized Qmax if debug mode is enabled
+        # Run legacy detection and slope-stabilized Qmax if debug mode is enabled
         if debug:
-            from alternative_detection import detect_voiding_alternative
-            
-            alt_result = detect_voiding_alternative(energy, time_axis)
-            alt_start_time = alt_result.start_time
-            alt_end_time = alt_result.end_time
-            alt_voiding_time = alt_result.voiding_time
-            alt_otsu_threshold = alt_result.otsu_threshold
+            # Run legacy fixed-threshold detection for comparison
+            legacy_start_idx, legacy_end_idx, legacy_voiding_time = self._detect_voiding_segment(
+                energy, noise_floor, time_axis
+            )
+            alt_start_time = float(time_axis[legacy_start_idx])
+            alt_end_time = float(time_axis[legacy_end_idx])
+            alt_voiding_time = legacy_voiding_time
             
             # Compute slope-stabilized Qmax (on full trimmed flow, not exclusion-masked)
             qmax_slope_stabilized, slope_threshold, stable_mask = self._calc_qmax_slope_stabilized(
@@ -160,16 +164,17 @@ class AudioProcessor:
             )
             
             # Store debug data for visualization
+            # Note: "fixed" = Otsu+changepoint (now default), "alt" = legacy fixed-threshold
             debug_data = {
                 'filtered_audio': filtered,
                 'sample_rate': sr,
                 'time_axis_full': time_axis,
                 'energy': energy,
                 'noise_floor': noise_floor,
-                'fixed_start_idx': start_idx,
+                'fixed_start_idx': start_idx,  # Otsu+changepoint (default)
                 'fixed_end_idx': end_idx,
-                'alt_start_idx': alt_result.start_idx,
-                'alt_end_idx': alt_result.end_idx,
+                'alt_start_idx': legacy_start_idx,  # Legacy fixed-threshold
+                'alt_end_idx': legacy_end_idx,
                 # Slope-stabilized Qmax debug data
                 'flow_rate_minimal': flow_rate_minimal,
                 'flow_rate_smooth': flow_rate_smooth,
@@ -199,19 +204,19 @@ class AudioProcessor:
         )
     
     def _normalize_input(self, audio: np.ndarray, sr: int) -> Tuple[np.ndarray, int]:
-        """Step 1: Convert to mono, resample to 16kHz"""
+        """Step 1: Convert to mono, normalize amplitude (no resampling).
+        
+        Expects 44.1kHz or 48kHz mono uncompressed WAV.
+        Bandpass filter is applied at native sample rate.
+        """
         # Convert to mono if stereo
         if len(audio.shape) > 1:
             audio = np.mean(audio, axis=1)
         
-        # Resample to target sample rate
-        if sr != self.TARGET_SR:
-            audio = librosa.resample(audio, orig_sr=sr, target_sr=self.TARGET_SR)
-        
-        # Normalize amplitude
+        # Normalize amplitude (no resampling - use native rate)
         audio = audio / (np.max(np.abs(audio)) + 1e-10)
         
-        return audio, self.TARGET_SR
+        return audio, sr
     
     def _bandpass_filter(self, audio: np.ndarray, sr: int) -> np.ndarray:
         """

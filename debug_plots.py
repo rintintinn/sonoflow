@@ -200,8 +200,8 @@ def plot_detection_comparison(
     ax.axvline(x=alt_end_time, color='#a855f7', linestyle='--', linewidth=2)
     
     # Create custom legend
-    fixed_patch = mpatches.Patch(color='#22c55e', label=f'Fixed Threshold: {fixed_start_time:.1f}s – {fixed_end_time:.1f}s')
-    alt_patch = mpatches.Patch(color='#a855f7', label=f'Otsu+Changepoint: {alt_start_time:.1f}s – {alt_end_time:.1f}s')
+    fixed_patch = mpatches.Patch(color='#22c55e', label=f'Otsu+Changepoint (default): {fixed_start_time:.1f}s – {fixed_end_time:.1f}s')
+    alt_patch = mpatches.Patch(color='#a855f7', label=f'Legacy Fixed-Threshold: {alt_start_time:.1f}s – {alt_end_time:.1f}s')
     ax.legend(handles=[fixed_patch, alt_patch], loc='upper right', 
               facecolor='#1e293b', edgecolor='#475569', labelcolor='white', fontsize=9)
     
@@ -211,7 +211,7 @@ def plot_detection_comparison(
     duration_fixed = fixed_end_time - fixed_start_time
     duration_alt = alt_end_time - alt_start_time
     
-    info_text = f'Fixed: {duration_fixed:.1f}s | Alt: {duration_alt:.1f}s | Δ={duration_alt - duration_fixed:+.1f}s'
+    info_text = f'Otsu (default): {duration_fixed:.1f}s | Legacy: {duration_alt:.1f}s | Δ={duration_alt - duration_fixed:+.1f}s'
     ax.text(0.02, 0.95, info_text, transform=ax.transAxes, color='white', fontsize=9,
             bbox=dict(boxstyle='round', facecolor='#334155', edgecolor='#475569', alpha=0.9))
     

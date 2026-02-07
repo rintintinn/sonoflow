@@ -15,7 +15,9 @@ Algorithm:
     4. Filter out non-voiding noise spikes (too short or too weak)
     5. Classify gaps between episodes (short=straining, long=post-void)
     6. Merge included episodes into a single voiding window
-    7. Refine episode edges using changepoint detector
+    7. Asymmetric edge refinement:
+       - Onset: changepoint detector (sharp stream-hitting-water transition)
+       - Offset: tail-walk until sustained silence (gradual trickle tail-off)
 
 Why two thresholds:
     - Otsu gives the optimal separation between noise and voiding energy classes,
@@ -332,15 +334,26 @@ def detect_voiding_multiepisode(
     included_episodes = merged_episodes
 
     # =========================================================================
-    # Step 7: Refine edges using changepoint detector
+    # Step 7: Asymmetric edge refinement
+    # =========================================================================
+    #
+    # Onset and offset have fundamentally different signal characteristics:
+    #   - Onset: sharp transition (stream hitting water) → changepoint works well
+    #   - Offset: gradual tail-off (trickle flow) → changepoint cuts too early
+    #
+    # Strategy:
+    #   - START: use changepoint detector (finds sharp onset transition)
+    #   - END:   walk forward from last episode until energy falls below
+    #            noise_floor × tail_threshold_mult for a sustained period
+    #            (captures the gradual tail that conventional uroflowmeters detect)
     # =========================================================================
 
     first_ep = included_episodes[0]
     last_ep = included_episodes[-1]
 
+    # --- Onset refinement: changepoint (sharp transition) ---
     changepoints = detector.detect(energy, min_size=max(5, int(0.1 / hop_sec)))
 
-    # Refine start: find the nearest changepoint before first episode
     refined_start = first_ep.start_idx
     if changepoints:
         onset_candidates = [cp for cp in changepoints if cp <= first_ep.start_idx]
@@ -349,14 +362,44 @@ def detect_voiding_multiepisode(
             if (first_ep.start_idx - best_cp) * hop_sec <= 1.0:
                 refined_start = best_cp
 
-    # Refine end: find the nearest changepoint after last episode
+    # --- Offset refinement: tail-walk (gradual tail-off) ---
+    #
+    # Walk forward from the last episode's end until energy drops below
+    # tail_end_threshold and stays there for sustained_low_sec.
+    #
+    # This mirrors how conventional uroflowmeters work: they continue
+    # recording until the weight sensor stops detecting flow, which
+    # includes the terminal trickle phase.
+    #
+    # Parameters:
+    #   tail_end_threshold: energy level considered "below flow"
+    #     - Uses noise_floor × 1.5 (same as legacy method's edge detection)
+    #   sustained_low_sec: how long energy must stay below threshold
+    #     - 0.5s (20 frames at 25ms hop) — same as legacy method
+
+    tail_end_threshold = noise_floor * 1.5
+    sustained_low_frames = int(0.5 / hop_sec)  # 0.5s sustained silence
+
     refined_end = last_ep.end_idx
-    if changepoints:
-        end_candidates = [cp for cp in changepoints if cp >= last_ep.end_idx]
-        if end_candidates:
-            best_cp = min(end_candidates)
-            if (best_cp - last_ep.end_idx) * hop_sec <= 1.0:
-                refined_end = best_cp
+
+    # Walk forward from last episode end
+    max_walk = min(last_ep.end_idx + int(5.0 / hop_sec), len(energy) - 1)  # Max 5s walk
+    for i in range(last_ep.end_idx, max_walk):
+        if energy[i] < tail_end_threshold:
+            # Check if it stays below threshold for sustained_low_frames
+            sustained = True
+            end_check = min(i + sustained_low_frames, len(energy))
+            for j in range(i, end_check):
+                if energy[j] >= tail_end_threshold:
+                    sustained = False
+                    break
+
+            if sustained:
+                refined_end = i
+                break
+    else:
+        # Walked the full 5s without sustained silence — use max_walk
+        refined_end = max_walk
 
     # Clamp to valid range
     refined_start = max(0, refined_start)

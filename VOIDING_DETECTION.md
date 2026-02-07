@@ -89,7 +89,7 @@ t=40s: 7.0× (post-void spike)
 
 ---
 
-### Approach 6: Peak-Relative End Detection ✅ **FINAL**
+### Approach 6: Peak-Relative End Detection ✅ **LEGACY**
 Find end as first point after peak where energy drops to <10% of peak and stays low for 0.5s.
 ```python
 peak_energy = np.max(energy)
@@ -115,20 +115,57 @@ for i in range(peak_idx, len(energy)):
 
 ---
 
-## Final Algorithm Summary
+### Approach 7: Otsu + Changepoint ✅ **CURRENT DEFAULT**
+
+Adaptive thresholding combined with rolling-statistics changepoint detection.
 
 ```python
-# Start detection: 3× noise floor threshold
-flow_threshold = noise_floor * 3.0
-first_idx = first frame where energy > flow_threshold
+# Step 1: Otsu's method for adaptive threshold
+threshold = otsu_threshold(energy)  # Data-driven, no fixed constants
 
-# End detection: 10% of peak, sustained for 0.5s
-end_threshold = peak_energy * 0.10
-true_end_idx = first frame after peak where energy < end_threshold for 0.5s
+# Step 2: Rolling statistics changepoint detection
+short_mean = rolling_mean(energy, window=5)
+long_mean = rolling_mean(energy, window=20)
+ratio = short_mean / long_mean
 
-# Refinement
-start_idx = walk back from first_idx to find upslope start (1.5× noise)
-end_idx = walk forward from true_end_idx to include trailing flow
+# Step 3: Find onset (ratio > 1.5 sustained for ≥8 frames)
+onset_idx = first sustained rise above ratio threshold
+
+# Step 4: Find end (ratio < 0.7 sustained for ≥8 frames)
+end_idx = last sustained period above ratio threshold
+```
+
+**Result**: **23.2s** (expected 24.7s) - **94% accuracy** ✅
+
+**Why this is now default**:
+- **Fully adaptive** - no hardcoded noise floor multipliers
+- Works across varying recording environments and noise levels
+- Otsu's method automatically separates voiding from background
+- Changepoint detection finds sustained transitions, not transient spikes
+
+---
+
+## Current Default vs Legacy
+
+| Method | Detection Time | Status |
+|--------|---------------|--------|
+| **Otsu+Changepoint** | 23.2s | **Default** |
+| Peak-Relative Fixed | 23.7s | Legacy (debug mode) |
+| Medical-Grade Reference | 24.7s | Ground truth |
+
+---
+
+## Final Algorithm Summary (Current Default)
+
+```python
+from alternative_detection import detect_voiding_alternative
+
+# Single call handles everything:
+result = detect_voiding_alternative(energy, time_axis)
+start_idx = result.start_idx
+end_idx = result.end_idx
+voiding_time = result.voiding_time
+otsu_threshold = result.otsu_threshold
 
 # Time shift
 time_axis = time_axis[start_idx:end_idx] - time_axis[start_idx]
@@ -143,3 +180,6 @@ time_axis = time_axis[start_idx:end_idx] - time_axis[start_idx]
 3. **Sustained silence detection** needs to use a threshold below any post-void activity
 4. **Gap detection** fails when post-void sounds are close in time to voiding end
 5. **The 10% of peak threshold** works because post-void sounds are typically much weaker than peak urine flow
+6. **Otsu's method** provides truly adaptive thresholding without any hardcoded constants
+7. **Changepoint detection** finds sustained transitions rather than isolated spikes
+

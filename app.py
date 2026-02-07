@@ -146,16 +146,32 @@ if analyze_clicked:
                 if error:
                     st.error(f"❌ {error}")
                 else:
-                    # Process
+                    # Process with debug mode for comparison graph
                     processor = AudioProcessor()
-                    result = processor.process(audio_data, sample_rate, volume_ml)
+                    result = processor.process(audio_data, sample_rate, volume_ml, debug=True)
                     
-                    # Generate graph
+                    # Generate main flow curve graph
                     graph_bytes, timestamp_str = generate_clinical_graph(result)
+                    
+                    # Generate detection comparison graph
+                    comparison_bytes = None
+                    if result.debug_data:
+                        from debug_plots import plot_detection_comparison
+                        d = result.debug_data
+                        comparison_bytes = plot_detection_comparison(
+                            time_axis=d['time_axis_full'],
+                            energy=d['energy'],
+                            noise_floor=d['noise_floor'],
+                            fixed_start_idx=d['fixed_start_idx'],
+                            fixed_end_idx=d['fixed_end_idx'],
+                            alt_start_idx=d['alt_start_idx'],
+                            alt_end_idx=d['alt_end_idx']
+                        )
                     
                     # Store in session state
                     st.session_state.result = result
                     st.session_state.graph_bytes = graph_bytes
+                    st.session_state.comparison_bytes = comparison_bytes
                     st.session_state.timestamp = timestamp_str
                     
             except Exception as e:
@@ -220,6 +236,26 @@ if "result" in st.session_state and st.session_state.result:
         mime="image/png",
         use_container_width=True
     )
+    
+    # Detection comparison graph (research/debug display)
+    if "comparison_bytes" in st.session_state and st.session_state.comparison_bytes:
+        with st.expander("🔬 Detection Method Comparison", expanded=False):
+            st.markdown("""
+            <p style="color: #94a3b8; font-size: 0.85rem; margin-bottom: 10px;">
+            Comparison of voiding detection methods: Fixed threshold (green) vs Otsu+Changepoint adaptive (purple).
+            </p>
+            """, unsafe_allow_html=True)
+            st.image(st.session_state.comparison_bytes, use_container_width=True)
+            
+            # Show timing comparison if available
+            if result.alt_voiding_time is not None:
+                col_fixed, col_alt = st.columns(2)
+                with col_fixed:
+                    st.metric("Fixed Threshold", f"{result.voiding_time:.1f}s")
+                with col_alt:
+                    delta = result.alt_voiding_time - result.voiding_time
+                    st.metric("Otsu+Changepoint", f"{result.alt_voiding_time:.1f}s", 
+                             delta=f"{delta:+.1f}s")
 
 # Footer - always display
 st.markdown("""

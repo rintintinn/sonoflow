@@ -10,17 +10,20 @@ detection pipeline (alternative_detection.py).
 
 Algorithm:
     1. Compute adaptive threshold via Otsu's method (bimodal separation)
-    2. Detect all candidate episodes (contiguous above-Otsu-threshold regions)
-    3. Filter out non-voiding noise spikes (too short or too weak)
-    4. Classify gaps between episodes (short=straining, long=post-void)
-    5. Merge included episodes into a single voiding window
-    6. Refine episode edges using changepoint detector
+    2. Derive a scanning threshold (lower than Otsu) for episode boundary detection
+    3. Detect all candidate episodes (contiguous above-scanning-threshold regions)
+    4. Filter out non-voiding noise spikes (too short or too weak)
+    5. Classify gaps between episodes (short=straining, long=post-void)
+    6. Merge included episodes into a single voiding window
+    7. Refine episode edges using changepoint detector
 
-Why Otsu + changepoint instead of fixed threshold:
-    - Otsu adapts to recording environment (no hardcoded multiplier)
-    - Works regardless of absolute noise level
-    - Changepoint detector finds sustained transitions, not transient spikes
-    - Consistent with the project's default single-episode detection
+Why two thresholds:
+    - Otsu gives the optimal separation between noise and voiding energy classes,
+      but variable-energy episodes (common in BPH) have many dips below Otsu,
+      fragmenting them into dozens of micro-episodes that get rejected.
+    - The scanning threshold (midpoint between noise floor and Otsu) captures
+      the broad envelope of each episode, while Otsu is used to validate that
+      detected episodes contain genuine voiding energy.
 
 References:
     - Straining patterns are common in BPH patients and can produce
@@ -74,7 +77,8 @@ class MultiEpisodeResult:
     gap_durations: List[float]   # Duration of each inter-episode gap
 
     # Detection metadata
-    otsu_thresh: float           # Otsu threshold used for episode detection
+    otsu_thresh: float           # Otsu threshold (for classification/validation)
+    scan_thresh: float           # Scanning threshold used for episode detection
     method: str = "otsu_changepoint_multiepisode"
 
     # Indices of episodes that were rejected (for debugging)
@@ -84,6 +88,7 @@ class MultiEpisodeResult:
 def detect_voiding_multiepisode(
     energy: np.ndarray,
     time_axis: np.ndarray,
+    noise_floor: Optional[float] = None,
     # Episode filtering parameters
     min_episode_duration_sec: float = 0.3,
     min_episode_peak_fraction: float = 0.05,
@@ -91,6 +96,8 @@ def detect_voiding_multiepisode(
     short_gap_max_sec: float = 2.0,
     long_gap_min_sec: float = 5.0,
     medium_gap_energy_fraction: float = 0.20,
+    # Scanning threshold control
+    scan_threshold_fraction: float = 0.5,
     # Changepoint detector (optional override)
     detector: Optional[ChangePointDetector] = None,
     # Otsu parameters
@@ -99,12 +106,16 @@ def detect_voiding_multiepisode(
     """
     Detect voiding segment with support for intermittent/straining patterns.
 
-    Uses Otsu adaptive threshold for episode detection and changepoint detector
-    for edge refinement, consistent with the project's default detection method.
+    Uses a two-threshold approach:
+    - Otsu threshold: optimal noise/voiding separation (for episode validation)
+    - Scanning threshold: lower threshold for finding episode boundaries
+      (captures the broad envelope without fragmenting variable-energy episodes)
 
     Args:
         energy: RMS energy signal (from Step 3 of pipeline)
         time_axis: Time values for each energy frame
+        noise_floor: Optional noise floor estimate. If None, uses 10th percentile
+            of energy (same as processor.py Step 4).
 
         min_episode_duration_sec: Minimum episode duration to be considered real flow.
             Shorter episodes are rejected as noise spikes. Default 0.3s.
@@ -117,6 +128,10 @@ def detect_voiding_multiepisode(
             Default 5.0s.
         medium_gap_energy_fraction: For gaps between short and long, include the next
             episode only if its peak exceeds this fraction of global peak. Default 0.20 (20%).
+
+        scan_threshold_fraction: Where to set the scanning threshold between noise_floor
+            and Otsu threshold. 0.0 = noise_floor, 1.0 = Otsu, 0.5 = midpoint (default).
+            Lower values capture more of the episode envelope but may include more noise.
 
         detector: Optional custom changepoint detector. If None, uses the default
             RollingStatsChangePointDetector (same as alternative_detection.py).
@@ -137,24 +152,46 @@ def detect_voiding_multiepisode(
     # Step 1: Compute adaptive threshold via Otsu's method
     # =========================================================================
 
-    threshold = otsu_threshold(energy, n_bins=otsu_n_bins)
+    otsu_thresh = otsu_threshold(energy, n_bins=otsu_n_bins)
 
-    # Initialize changepoint detector for edge refinement (Step 5)
+    # Estimate noise floor if not provided
+    if noise_floor is None:
+        noise_floor = float(np.percentile(energy, 10))
+
+    # =========================================================================
+    # Step 2: Derive scanning threshold
+    # =========================================================================
+    #
+    # The scanning threshold is set between noise_floor and Otsu threshold.
+    # This is lower than Otsu, so it captures the broad envelope of variable-
+    # energy episodes without fragmenting them into micro-episodes.
+    #
+    # The key insight: Otsu is optimal for binary classification (noise vs voiding)
+    # but too aggressive for episode boundary detection when voiding energy is
+    # highly variable (BPH straining, intermittent flow). A lower threshold
+    # finds the gross episode boundaries, while Otsu validates their content.
+    # =========================================================================
+
+    scan_thresh = noise_floor + scan_threshold_fraction * (otsu_thresh - noise_floor)
+
+    # Safety: ensure scanning threshold is at least above noise floor
+    scan_thresh = max(scan_thresh, noise_floor * 1.5)
+
+    # Initialize changepoint detector for edge refinement (Step 7)
     if detector is None:
         detector = RollingStatsChangePointDetector()
 
     # =========================================================================
-    # Step 2: Find ALL candidate episodes (contiguous above-Otsu regions)
+    # Step 3: Find ALL candidate episodes (contiguous above-scanning-threshold)
     # =========================================================================
 
-    above_threshold = energy > threshold
+    above_threshold = energy > scan_thresh
 
     if not np.any(above_threshold):
         # No flow detected — return entire recording as fallback
-        return _fallback_result(energy, time_axis, threshold)
+        return _fallback_result(energy, time_axis, otsu_thresh, scan_thresh)
 
     # Find contiguous regions above threshold
-    # Detect transitions: 0→1 = episode start, 1→0 = episode end
     padded = np.concatenate([[False], above_threshold, [False]])
     diffs = np.diff(padded.astype(int))
 
@@ -167,7 +204,6 @@ def detect_voiding_multiepisode(
 
     raw_episodes = []
     for start, end in zip(episode_starts, episode_ends):
-        # end is exclusive (first frame below threshold), so episode is [start, end-1]
         end_inclusive = end - 1
 
         if end_inclusive < start:
@@ -185,10 +221,17 @@ def detect_voiding_multiepisode(
         ))
 
     if len(raw_episodes) == 0:
-        return _fallback_result(energy, time_axis, threshold)
+        return _fallback_result(energy, time_axis, otsu_thresh, scan_thresh)
 
     # =========================================================================
-    # Step 3: Filter out non-voiding episodes
+    # Step 4: Filter out non-voiding episodes
+    # =========================================================================
+    #
+    # Two-stage filter:
+    #   a) Reject episodes too short (noise spikes)
+    #   b) Reject episodes whose PEAK is below min_episode_peak_fraction of global peak
+    #   c) Validate: episode must have at least some frames above Otsu threshold
+    #      (confirms it contains genuine voiding energy, not just elevated noise)
     # =========================================================================
 
     valid_episodes = []
@@ -207,6 +250,14 @@ def detect_voiding_multiepisode(
             rejected_episodes.append(ep)
             continue
 
+        # Validate: at least some content above Otsu threshold
+        # (confirms this is a real voiding episode, not just elevated background)
+        ep_above_otsu = np.sum(energy[ep.start_idx:ep.end_idx + 1] > otsu_thresh)
+        otsu_fraction = ep_above_otsu / ep_frames
+        if otsu_fraction < 0.1:  # Less than 10% of episode above Otsu → likely noise
+            rejected_episodes.append(ep)
+            continue
+
         valid_episodes.append(ep)
 
     if len(valid_episodes) == 0:
@@ -215,10 +266,9 @@ def detect_voiding_multiepisode(
         valid_episodes = [strongest]
 
     # =========================================================================
-    # Step 4: Classify gaps and decide which episodes to merge
+    # Step 5: Classify gaps and decide which episodes to merge
     # =========================================================================
 
-    # Start with the first valid episode, then decide whether to include subsequent ones
     included_episodes = [valid_episodes[0]]
     gap_durations = []
 
@@ -229,7 +279,6 @@ def detect_voiding_multiepisode(
         gap_duration = curr_ep.start_time - prev_ep.end_time
         gap_durations.append(gap_duration)
 
-        # Classification logic
         include = False
 
         if gap_duration <= short_gap_max_sec:
@@ -238,7 +287,6 @@ def detect_voiding_multiepisode(
 
         elif gap_duration >= long_gap_min_sec:
             # Long gap: likely post-void activity → exclude
-            # (also excludes all subsequent episodes)
             include = False
 
         else:
@@ -252,29 +300,44 @@ def detect_voiding_multiepisode(
             included_episodes.append(curr_ep)
         else:
             # Stop including further episodes once we hit a long/rejected gap
-            # (episodes after a long gap are likely post-void activity)
             break
 
     # =========================================================================
-    # Step 5: Refine edges using changepoint detector
+    # Step 6: Merge adjacent/overlapping episodes
     # =========================================================================
     #
-    # Instead of walking back with a fixed noise_floor multiplier, we use the
-    # changepoint detector's rolling-mean ratio to find where energy truly
-    # transitions from background to voiding.
-    #
-    # Strategy:
-    #   - For the first episode's start: look for the nearest onset changepoint
-    #     before the Otsu-detected start
-    #   - For the last episode's end: look for the nearest end changepoint
-    #     after the Otsu-detected end
-    #   - Fallback: if no suitable changepoint found, use Otsu boundary as-is
+    # Because we use a lower scanning threshold, episodes that were separate
+    # at the Otsu level may now be contiguous or overlapping. Merge them.
+    # =========================================================================
+
+    merged_episodes = [included_episodes[0]]
+    for ep in included_episodes[1:]:
+        prev = merged_episodes[-1]
+        # If this episode starts within 1 frame of previous end, merge
+        if ep.start_idx <= prev.end_idx + 2:
+            # Merge: extend previous episode
+            merged_energy = energy[prev.start_idx:ep.end_idx + 1]
+            merged_episodes[-1] = FlowEpisode(
+                start_idx=prev.start_idx,
+                end_idx=ep.end_idx,
+                start_time=prev.start_time,
+                end_time=ep.end_time,
+                duration=float(time_axis[ep.end_idx] - time_axis[prev.start_idx]),
+                peak_energy=float(np.max(merged_energy)),
+                mean_energy=float(np.mean(merged_energy)),
+            )
+        else:
+            merged_episodes.append(ep)
+
+    included_episodes = merged_episodes
+
+    # =========================================================================
+    # Step 7: Refine edges using changepoint detector
     # =========================================================================
 
     first_ep = included_episodes[0]
     last_ep = included_episodes[-1]
 
-    # Get changepoints from the detector
     changepoints = detector.detect(energy, min_size=max(5, int(0.1 / hop_sec)))
 
     # Refine start: find the nearest changepoint before first episode
@@ -282,9 +345,7 @@ def detect_voiding_multiepisode(
     if changepoints:
         onset_candidates = [cp for cp in changepoints if cp <= first_ep.start_idx]
         if onset_candidates:
-            # Use the changepoint closest to (but before) the episode start
             best_cp = max(onset_candidates)
-            # Only use it if it's reasonably close (within 1 second)
             if (first_ep.start_idx - best_cp) * hop_sec <= 1.0:
                 refined_start = best_cp
 
@@ -293,9 +354,7 @@ def detect_voiding_multiepisode(
     if changepoints:
         end_candidates = [cp for cp in changepoints if cp >= last_ep.end_idx]
         if end_candidates:
-            # Use the changepoint closest to (but after) the episode end
             best_cp = min(end_candidates)
-            # Only use it if it's reasonably close (within 1 second)
             if (best_cp - last_ep.end_idx) * hop_sec <= 1.0:
                 refined_end = best_cp
 
@@ -303,7 +362,6 @@ def detect_voiding_multiepisode(
     refined_start = max(0, refined_start)
     refined_end = min(len(energy) - 1, refined_end)
 
-    # Ensure start < end
     if refined_start >= refined_end:
         refined_start = first_ep.start_idx
         refined_end = last_ep.end_idx
@@ -341,7 +399,8 @@ def detect_voiding_multiepisode(
         num_episodes=len(included_episodes),
         pattern=pattern,
         gap_durations=gap_durations,
-        otsu_thresh=float(threshold),
+        otsu_thresh=float(otsu_thresh),
+        scan_thresh=float(scan_thresh),
         rejected_episodes=rejected_episodes,
     )
 
@@ -350,6 +409,7 @@ def _fallback_result(
     energy: np.ndarray,
     time_axis: np.ndarray,
     otsu_thresh: float,
+    scan_thresh: float,
 ) -> MultiEpisodeResult:
     """Fallback when no flow is detected — return entire recording."""
     total_time = float(time_axis[-1] - time_axis[0]) if len(time_axis) > 1 else 0.0
@@ -376,4 +436,5 @@ def _fallback_result(
         pattern="continuous",
         gap_durations=[],
         otsu_thresh=otsu_thresh,
+        scan_thresh=scan_thresh,
     )

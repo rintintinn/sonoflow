@@ -111,12 +111,14 @@ class AudioProcessor:
             quality_warnings.append(f"Non-standard sample rate: {sample_rate}Hz (expected 44100 or 48000)")
         
         # Step 5: Voiding segment detection using Multi-Episode detection
-        # Uses Otsu adaptive threshold + changepoint detection (consistent with alternative_detection.py)
+        # Uses two-threshold approach: scanning threshold (lower) for boundaries,
+        # Otsu threshold for episode validation
         from multi_episode_detection import detect_voiding_multiepisode
         
         multi_result = detect_voiding_multiepisode(
             energy=energy,
             time_axis=time_axis,
+            noise_floor=noise_floor,  # Pass for proper scanning threshold calculation
         )
         start_idx = multi_result.voiding_start_idx
         end_idx = multi_result.voiding_end_idx

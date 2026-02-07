@@ -61,7 +61,7 @@ async def analyze(
     
     Returns JSON with:
     - success: boolean
-    - parameters: dict with qmax_peak, qmax_smooth, qmax_icc_sliding, qmax_icc_consecutive, qavg, voiding_time, volume_ml
+    - parameters: dict with qmax_peak, qmax_smooth, qmax_ics_sliding, qmax_ics_consecutive, qavg, voiding_time, volume_ml
     - graph_base64: PNG image encoded as base64 string
     - timestamp: Analysis timestamp for reference
     """
@@ -92,8 +92,8 @@ async def analyze(
             "parameters": {
                 "qmax_peak": round(result.qmax, 1),
                 "qmax_smooth": round(result.qmax_smoothed, 1),
-                "qmax_icc_sliding": round(result.qmax_icc_sliding, 1),
-                "qmax_icc_consecutive": round(result.qmax_icc_consecutive, 1),
+                "qmax_ics_sliding": round(result.qmax_ics_sliding, 1),
+                "qmax_ics_consecutive": round(result.qmax_ics_consecutive, 1),
                 "qavg": round(result.qavg, 1),
                 "voiding_time": round(result.voiding_time, 1),
                 "volume_ml": result.volume_ml

@@ -50,8 +50,8 @@ Upload an audio recording and receive clinical parameters (including all 4 Qmax 
   "parameters": {
     "qmax_peak": 24.8,
     "qmax_smooth": 18.1,
-    "qmax_icc_sliding": 22.1,
-    "qmax_icc_consecutive": 18.8,
+    "qmax_ics_sliding": 22.1,
+    "qmax_ics_consecutive": 18.8,
     "qavg": 7.4,
     "voiding_time": 26.9,
     "volume_ml": 200.0

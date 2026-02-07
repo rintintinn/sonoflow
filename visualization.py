@@ -75,8 +75,8 @@ def generate_clinical_graph(result: ProcessingResult, output_path: str = None) -
     annotation_text = (
         f"Qmax (peak): {result.qmax:.1f} ml/s\n"
         f"Qmax (smooth): {result.qmax_smoothed:.1f} ml/s\n"
-        f"Qmax (ICC-slide): {result.qmax_icc_sliding:.1f} ml/s\n"
-        f"Qmax (ICC-consec): {result.qmax_icc_consecutive:.1f} ml/s\n"
+        f"Qmax (ICS-slide): {result.qmax_ics_sliding:.1f} ml/s\n"
+        f"Qmax (ICS-consec): {result.qmax_ics_consecutive:.1f} ml/s\n"
         f"Qavg: {result.qavg:.1f} ml/s\n"
         f"Volume: {result.volume_ml:.0f} ml\n"
         f"Voiding Time: {result.voiding_time:.1f} s"

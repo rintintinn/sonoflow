@@ -7,8 +7,8 @@ import numpy as np
 from scipy import signal
 from scipy.signal import savgol_filter
 import librosa
-from dataclasses import dataclass
-from typing import Tuple
+from dataclasses import dataclass, field
+from typing import Tuple, Optional, Dict, Any
 
 
 @dataclass
@@ -23,6 +23,15 @@ class ProcessingResult:
     qavg: float               # Average flow rate (ml/s)
     voiding_time: float       # Total voiding time (seconds)
     volume_ml: float          # User-provided volume (ml)
+    
+    # Alternative detection results (optional)
+    alt_start_time: Optional[float] = None
+    alt_end_time: Optional[float] = None
+    alt_voiding_time: Optional[float] = None
+    alt_otsu_threshold: Optional[float] = None
+    
+    # Debug data (optional, only populated when debug=True)
+    debug_data: Optional[Dict[str, Any]] = field(default=None)
 
 
 class AudioProcessor:
@@ -48,7 +57,8 @@ class AudioProcessor:
     def __init__(self):
         pass
     
-    def process(self, audio_data: np.ndarray, sample_rate: int, volume_ml: float) -> ProcessingResult:
+    def process(self, audio_data: np.ndarray, sample_rate: int, volume_ml: float, 
+                debug: bool = False) -> ProcessingResult:
         """
         Main processing pipeline.
         
@@ -56,6 +66,7 @@ class AudioProcessor:
             audio_data: Raw audio samples
             sample_rate: Original sample rate
             volume_ml: User-specified voided volume in ml
+            debug: If True, also run alternative detection and store debug data
             
         Returns:
             ProcessingResult with flow curve and parameters
@@ -98,6 +109,36 @@ class AudioProcessor:
         
         qavg = volume_ml / voiding_time if voiding_time > 0 else 0.0
         
+        # Initialize optional fields
+        alt_start_time = None
+        alt_end_time = None
+        alt_voiding_time = None
+        alt_otsu_threshold = None
+        debug_data = None
+        
+        # Run alternative detection if debug mode is enabled
+        if debug:
+            from alternative_detection import detect_voiding_alternative
+            
+            alt_result = detect_voiding_alternative(energy, time_axis)
+            alt_start_time = alt_result.start_time
+            alt_end_time = alt_result.end_time
+            alt_voiding_time = alt_result.voiding_time
+            alt_otsu_threshold = alt_result.otsu_threshold
+            
+            # Store debug data for visualization
+            debug_data = {
+                'filtered_audio': filtered,
+                'sample_rate': sr,
+                'time_axis_full': time_axis,
+                'energy': energy,
+                'noise_floor': noise_floor,
+                'fixed_start_idx': start_idx,
+                'fixed_end_idx': end_idx,
+                'alt_start_idx': alt_result.start_idx,
+                'alt_end_idx': alt_result.end_idx,
+            }
+        
         return ProcessingResult(
             time=time_axis_trimmed,
             flow_rate=flow_rate_smooth,
@@ -107,7 +148,12 @@ class AudioProcessor:
             qmax_icc_consecutive=qmax_icc_consecutive,
             qavg=qavg,
             voiding_time=voiding_time,
-            volume_ml=volume_ml
+            volume_ml=volume_ml,
+            alt_start_time=alt_start_time,
+            alt_end_time=alt_end_time,
+            alt_voiding_time=alt_voiding_time,
+            alt_otsu_threshold=alt_otsu_threshold,
+            debug_data=debug_data
         )
     
     def _normalize_input(self, audio: np.ndarray, sr: int) -> Tuple[np.ndarray, int]:

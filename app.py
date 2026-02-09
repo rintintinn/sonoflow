@@ -187,12 +187,34 @@ if analyze_clicked:
                                 qmax_slope_stabilized=d['qmax_slope_stabilized'],
                                 slope_threshold=d['slope_threshold']
                             )
+                        
+                        # Generate spectral analysis plot
+                        spectral_bytes = None
+                        if 'voiding_likelihood' in d:
+                            from spectral_plots import plot_spectral_analysis
+                            spectral_bytes = plot_spectral_analysis(
+                                time_axis=d['time_axis_full'],
+                                energy=d['energy'],
+                                noise_floor=d['noise_floor'],
+                                primary_start_idx=d['fixed_start_idx'],
+                                primary_end_idx=d['fixed_end_idx'],
+                                legacy_start_idx=d['alt_start_idx'],
+                                legacy_end_idx=d['alt_end_idx'],
+                                spectral_centroid=d['spectral_centroid'],
+                                band_energy_ratio=d['band_energy_ratio'],
+                                spectral_flatness=d['spectral_flatness'],
+                                voiding_likelihood=d['voiding_likelihood'],
+                                spectral_start_idx=d['spectral_start_idx'],
+                                spectral_end_idx=d['spectral_end_idx'],
+                                likelihood_threshold=d['likelihood_threshold'],
+                            )
                     
                     # Store in session state
                     st.session_state.result = result
                     st.session_state.graph_bytes = graph_bytes
                     st.session_state.comparison_bytes = comparison_bytes
                     st.session_state.flow_stability_bytes = flow_stability_bytes
+                    st.session_state.spectral_bytes = spectral_bytes
                     st.session_state.timestamp = timestamp_str
                     
             except Exception as e:
@@ -333,6 +355,33 @@ if "result" in st.session_state and st.session_state.result:
                 with col_time:
                     if result.time_to_max_flow is not None:
                         st.metric("Time to Max Flow", f"{result.time_to_max_flow:.1f} s")
+    
+    # Spectral analysis plot
+    if "spectral_bytes" in st.session_state and st.session_state.spectral_bytes:
+        with st.expander("🔬 Spectral Analysis", expanded=False):
+            st.markdown("""
+            <p style="color: #94a3b8; font-size: 0.85rem; margin-bottom: 10px;">
+            Spectral voiding detection using frequency-domain features. 
+            Amber lines show onset/offset detected from voiding spectral signature 
+            (centroid, band energy ratio, flatness). Compare with energy-based 
+            methods (green = primary, purple = legacy).
+            </p>
+            """, unsafe_allow_html=True)
+            st.image(st.session_state.spectral_bytes, use_container_width=True)
+
+            # Show 3-way timing comparison
+            d = result.debug_data
+            if d and 'spectral_voiding_time' in d:
+                col_p, col_l, col_s = st.columns(3)
+                with col_p:
+                    st.metric("Primary (Otsu+CP)", f"{result.voiding_time:.1f}s")
+                with col_l:
+                    if result.alt_voiding_time:
+                        st.metric("Legacy (fixed)", f"{result.alt_voiding_time:.1f}s")
+                with col_s:
+                    delta = d['spectral_voiding_time'] - result.voiding_time
+                    st.metric("Spectral", f"{d['spectral_voiding_time']:.1f}s",
+                             delta=f"{delta:+.1f}s")
 
 # Footer - always display
 st.markdown("""

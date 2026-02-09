@@ -232,6 +232,27 @@ class AudioProcessor:
                 'slope_threshold': slope_threshold,
                 'qmax_slope_stabilized': qmax_slope_stabilized,
             }
+            
+            # Spectral analysis (parallel detection for research comparison)
+            from spectral_detection import detect_voiding_spectral
+            
+            spectral_result = detect_voiding_spectral(
+                audio=audio,              # Raw audio (pre-bandpass) for full spectral analysis
+                sample_rate=sr,
+                energy_time_axis=time_axis,
+            )
+            
+            # Add spectral data to debug_data dict
+            debug_data['spectral_centroid'] = spectral_result.spectral_centroid
+            debug_data['band_energy_ratio'] = spectral_result.band_energy_ratio
+            debug_data['spectral_flatness'] = spectral_result.spectral_flatness
+            debug_data['voiding_likelihood'] = spectral_result.voiding_likelihood
+            debug_data['spectral_start_idx'] = spectral_result.start_idx
+            debug_data['spectral_end_idx'] = spectral_result.end_idx
+            debug_data['spectral_start_time'] = spectral_result.start_time
+            debug_data['spectral_end_time'] = spectral_result.end_time
+            debug_data['spectral_voiding_time'] = spectral_result.voiding_time
+            debug_data['likelihood_threshold'] = spectral_result.likelihood_threshold
         
         return ProcessingResult(
             time=time_axis_trimmed,

@@ -256,3 +256,39 @@ time_axis = time_axis[start_idx:end_idx] - time_axis[start_idx]
 7. **Changepoint detection** finds sustained transitions rather than isolated spikes
 8. **Multi-episode detection** is essential for intermittent voiding (BPH, straining)
 9. **ICS dual timing** (voiding vs flow time) is clinically important for accurate Qavg
+
+---
+
+## Experimental: Spectral Analysis (Parallel Detection)
+
+**Status**: Research/Debug Mode Only (does not affect primary detection)
+
+To validate the energy-based detection, we run a parallel **Spectral Detection** algorithm that identifies voiding based on frequency characteristics rather than just amplitude.
+
+### Core Logic (Revision 3)
+
+1.  **Input**: **RAW normalized audio** (pre-bandpass).
+    *   *Why*: The 250-4000Hz bandpass filter removes the spectral "context" needed to distinguish voiding from background noise.
+2.  **Frequency Limit**: Features are computed only for frequencies **< 6 kHz**.
+    *   *Why*: Prevents high-frequency hiss/electronics noise from skewing the Spectral Centroid and Flatness.
+3.  **Features**:
+    *   **Spectral Centroid**: Voiding typically 800-2000 Hz.
+    *   **Band Energy Ratio (BER)**: Ratio of energy in 500-2500 Hz vs total (<6kHz).
+    *   **Spectral Flatness**: Voiding is "noise-like" (moderately flat), distinguishable from hums (peaky) or hiss (flat).
+4.  **Energy Gating**:
+    *   Likelihood scores are forced to 0 when frame RMS energy is below a threshold.
+    *   *Threshold*: `1.5 × NoiseFloor` (soft sigmoid gate).
+
+### Current Tuning (Field Test Candidates)
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| **Likelihood Threshold** | `0.25` | Score (0-1) to trigger detection. Lower = more sensitive. |
+| **Energy Gate** | `1.5` | Multiplier of noise floor. Lower = captures fainter flows. |
+
+### Visualization
+
+This is visible in the **"🔬 Spectral Analysis"** expander in the App, showing:
+*   **Amber lines**: Spectral onset/offset.
+*   **Green lines**: Primary (Energy-based) onset/offset.
+*   **Comparison Metric**: Difference in voiding time between methods.
